@@ -330,10 +330,18 @@ class AgentLoop:
             chat_id=msg.chat_id,
         )
 
+        # Send initial "Thinking..." message for streaming support
+        await self.bus.publish_outbound(OutboundMessage(
+            channel=msg.channel, chat_id=msg.chat_id, content="",
+            metadata=msg.metadata or {},
+            is_streaming=True,  # Initial progress message
+        ))
+
         async def _bus_progress(content: str) -> None:
             await self.bus.publish_outbound(OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id, content=content,
                 metadata=msg.metadata or {},
+                is_streaming=True,  # Mark as streaming progress
             ))
 
         final_content, tools_used = await self._run_agent_loop(
@@ -356,6 +364,7 @@ class AgentLoop:
             chat_id=msg.chat_id,
             content=final_content,
             metadata=msg.metadata or {},  # Pass through for channel-specific needs (e.g. Slack thread_ts)
+            is_final=True,  # Mark as final message to end streaming
         )
     
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:

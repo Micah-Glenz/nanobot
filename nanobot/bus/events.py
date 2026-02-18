@@ -26,12 +26,14 @@ class InboundMessage:
 @dataclass
 class OutboundMessage:
     """Message to send to a chat channel."""
-    
+
     channel: str
     chat_id: str
     content: str
     reply_to: str | None = None
     media: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    is_streaming: bool = False  # True during streaming progress
+    is_final: bool = False  # True for final message in stream
 
 

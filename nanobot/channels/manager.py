@@ -185,23 +185,36 @@ class ChannelManager:
     async def _dispatch_outbound(self) -> None:
         """Dispatch outbound messages to the appropriate channel."""
         logger.info("Outbound dispatcher started")
-        
+
         while True:
             try:
                 msg = await asyncio.wait_for(
                     self.bus.consume_outbound(),
                     timeout=1.0
                 )
-                
+
+                logger.debug(f"Dispatch: channel={msg.channel}, is_streaming={msg.is_streaming}, is_final={msg.is_final}")
+
                 channel = self.channels.get(msg.channel)
                 if channel:
                     try:
-                        await channel.send(msg)
+                        # Use streaming send for streaming messages (Telegram supports this)
+                        if msg.is_streaming or (msg.is_final and hasattr(channel, 'send_streaming')):
+                            logger.debug(f"Dispatch: routing to send_streaming (has_streaming={hasattr(channel, 'send_streaming')})")
+                            if hasattr(channel, 'send_streaming'):
+                                await channel.send_streaming(msg)
+                            else:
+                                # Fallback for channels without streaming support
+                                if msg.is_final:
+                                    await channel.send(msg)
+                        else:
+                            logger.debug(f"Dispatch: routing to send (normal)")
+                            await channel.send(msg)
                     except Exception as e:
                         logger.error(f"Error sending to {msg.channel}: {e}")
                 else:
                     logger.warning(f"Unknown channel: {msg.channel}")
-                    
+
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:

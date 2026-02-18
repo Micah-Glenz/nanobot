@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from loguru import logger
 from telegram import BotCommand, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -13,6 +14,10 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import TelegramConfig
+
+# Streaming configuration
+STREAM_MIN_EDIT_INTERVAL = 0.25  # 250ms between edits
+STREAM_THINKING_PREFIX = "💭 Thinking...\n\n"
 
 
 def _markdown_to_telegram_html(text: str) -> str:
@@ -126,6 +131,10 @@ class TelegramChannel(BaseChannel):
         self._app: Application | None = None
         self._chat_ids: dict[str, int] = {}  # Map sender_id to chat_id for replies
         self._typing_tasks: dict[str, asyncio.Task] = {}  # chat_id -> typing loop task
+        # Streaming state
+        self._stream_message_ids: dict[str, int] = {}  # chat_id -> message_id for editing
+        self._stream_content: dict[str, str] = {}  # chat_id -> accumulated content
+        self._last_edit_time: dict[str, float] = {}  # chat_id -> timestamp of last edit
     
     async def start(self) -> None:
         """Start the Telegram bot with long polling."""
@@ -253,6 +262,90 @@ class TelegramChannel(BaseChannel):
                         await self._app.bot.send_message(chat_id=chat_id, text=chunk)
                     except Exception as e2:
                         logger.error(f"Error sending Telegram message: {e2}")
+
+    async def send_streaming(self, msg: OutboundMessage) -> None:
+        """
+        Send or update a streaming message.
+
+        - First message: send with "Thinking..." prefix, store message_id
+        - Progress updates: edit message if 250ms elapsed since last edit
+        - Final message: edit to remove "Thinking..." prefix
+        """
+        logger.debug(f"send_streaming called: is_streaming={msg.is_streaming}, is_final={msg.is_final}, content_len={len(msg.content or '')}")
+
+        if not self._app:
+            logger.warning("Telegram bot not running")
+            return
+
+        try:
+            chat_id = int(msg.chat_id)
+        except ValueError:
+            logger.error(f"Invalid chat_id: {msg.chat_id}")
+            return
+
+        content = msg.content or ""
+
+        # Get current state
+        message_id = self._stream_message_ids.get(msg.chat_id)
+        accumulated = self._stream_content.get(msg.chat_id, "")
+
+        if msg.is_final:
+            # Final message - clear prefix and state
+            logger.debug(f"send_streaming FINAL: message_id={message_id}, content_preview={content[:50]}...")
+            display_content = content
+            self._stream_content.pop(msg.chat_id, None)
+            self._stream_message_ids.pop(msg.chat_id, None)
+            self._last_edit_time.pop(msg.chat_id, None)
+            self._stop_typing(msg.chat_id)
+        else:
+            # Progress update - accumulate content and add prefix
+            if content:
+                accumulated = content  # Use latest content (agent sends full accumulated)
+            self._stream_content[msg.chat_id] = accumulated
+
+            # Check throttle (skip for initial empty message - we want that sent immediately)
+            if accumulated:  # Only throttle if we have content
+                now = time.time()
+                last_edit = self._last_edit_time.get(msg.chat_id, 0)
+                if now - last_edit < STREAM_MIN_EDIT_INTERVAL:
+                    logger.debug(f"send_streaming THROTTLED: {now - last_edit:.3f}s since last edit")
+                    return  # Skip this update (too soon)
+
+            display_content = STREAM_THINKING_PREFIX + accumulated
+            if not accumulated:
+                display_content = STREAM_THINKING_PREFIX.rstrip()  # Just "Thinking..." for initial
+            self._last_edit_time[msg.chat_id] = time.time()
+            logger.debug(f"send_streaming PROGRESS: message_id={message_id}, content_preview={accumulated[:50] if accumulated else '(empty)'}...")
+
+        # Truncate if too long (Telegram limit is 4096)
+        max_len = 4000
+        if len(display_content) > max_len:
+            display_content = display_content[:max_len] + "..."
+
+        try:
+            if message_id:
+                # Edit existing message
+                html = _markdown_to_telegram_html(display_content)
+                await self._app.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=html,
+                    parse_mode="HTML"
+                )
+            elif not msg.is_final:
+                # Send new message (first progress update)
+                html = _markdown_to_telegram_html(display_content)
+                result = await self._app.bot.send_message(
+                    chat_id=chat_id,
+                    text=html,
+                    parse_mode="HTML"
+                )
+                self._stream_message_ids[msg.chat_id] = result.message_id
+        except Exception as e:
+            # Message may have been deleted or other error
+            logger.warning(f"Streaming update failed: {e}")
+            # Clear state to start fresh next time
+            self._stream_message_ids.pop(msg.chat_id, None)
     
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""
