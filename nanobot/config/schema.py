@@ -189,10 +189,34 @@ class AgentDefaults(Base):
     memory_window: int = 50
 
 
+class AgentDefinition(Base):
+    """Individual agent configuration for multi-agent pools."""
+
+    enabled: bool = True
+    name: str = ""  # Human-readable name (e.g., "Code Assistant")
+
+    # Model settings (override defaults)
+    model: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    max_tool_iterations: int | None = None
+    memory_window: int | None = None
+
+    # Workspace isolation
+    workspace: str | None = None  # e.g., "~/.nanobot/workspace_coder"
+
+    # Custom behavior
+    system_prompt: str | None = None  # Override default system prompt
+
+    # Agent-specific channels (overrides global config)
+    telegram: TelegramConfig | None = None
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    pool: dict[str, AgentDefinition] = Field(default_factory=dict)  # Multi-agent pool
 
 
 class ProviderConfig(Base):

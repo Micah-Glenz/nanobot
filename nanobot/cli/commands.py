@@ -336,22 +336,76 @@ def gateway(
     from nanobot.cron.service import CronService
     from nanobot.cron.types import CronJob
     from nanobot.heartbeat.service import HeartbeatService
-    
+
     if verbose:
         import logging
         logging.basicConfig(level=logging.DEBUG)
-    
+
     console.print(f"{__logo__} Starting nanobot gateway on port {port}...")
-    
+
     config = load_config()
+
+    # Check if multi-agent pool is configured
+    if config.agents.pool:
+        _run_multi_agent_gateway(config, verbose)
+    else:
+        _run_single_agent_gateway(config, verbose)
+
+
+def _run_multi_agent_gateway(config: Config, verbose: bool = False) -> None:
+    """Run gateway with multiple agents in parallel."""
+    from nanobot.agent.pool import AgentPool, ConfigError
+
+    console.print(f"[cyan]Multi-agent mode: {len(config.agents.pool)} agents configured[/cyan]")
+
+    try:
+        pool = AgentPool(config)
+    except ConfigError as e:
+        console.print(f"[red]Configuration error: {e}[/red]")
+        raise typer.Exit(1)
+
+    enabled_count = sum(1 for a in config.agents.pool.values() if a.enabled)
+    console.print(f"[green]✓[/green] {enabled_count} agents enabled")
+
+    # Show agent details
+    for agent_id, agent_def in config.agents.pool.items():
+        if not agent_def.enabled:
+            continue
+        name = agent_def.name or agent_id
+        model = agent_def.model or config.agents.defaults.model
+        workspace = agent_def.workspace or config.agents.defaults.workspace
+        console.print(f"  [dim]•[/dim] {name}: {model} @ {workspace}")
+
+    async def run():
+        try:
+            await pool.start_all()
+        except KeyboardInterrupt:
+            console.print("\nShutting down...")
+        finally:
+            await pool.stop_all()
+
+    asyncio.run(run())
+
+
+def _run_single_agent_gateway(config: Config, verbose: bool = False) -> None:
+    """Run gateway with a single agent (legacy mode)."""
+    from nanobot.config.loader import get_data_dir
+    from nanobot.bus.queue import MessageBus
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.channels.manager import ChannelManager
+    from nanobot.session.manager import SessionManager
+    from nanobot.cron.service import CronService
+    from nanobot.cron.types import CronJob
+    from nanobot.heartbeat.service import HeartbeatService
+
     bus = MessageBus()
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
-    
+
     # Create cron service first (callback set after agent creation)
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
-    
+
     # Create agent with cron service
     agent = AgentLoop(
         bus=bus,
@@ -369,7 +423,7 @@ def gateway(
         session_manager=session_manager,
         mcp_servers=config.tools.mcp_servers,
     )
-    
+
     # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
@@ -388,33 +442,33 @@ def gateway(
             ))
         return response
     cron.on_job = on_cron_job
-    
+
     # Create heartbeat service
     async def on_heartbeat(prompt: str) -> str:
         """Execute heartbeat through the agent."""
         return await agent.process_direct(prompt, session_key="heartbeat")
-    
+
     heartbeat = HeartbeatService(
         workspace=config.workspace_path,
         on_heartbeat=on_heartbeat,
         interval_s=30 * 60,  # 30 minutes
         enabled=True
     )
-    
+
     # Create channel manager
     channels = ChannelManager(config, bus)
-    
+
     if channels.enabled_channels:
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
     else:
         console.print("[yellow]Warning: No channels enabled[/yellow]")
-    
+
     cron_status = cron.status()
     if cron_status["jobs"] > 0:
         console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
-    
+
     console.print(f"[green]✓[/green] Heartbeat: every 30m")
-    
+
     async def run():
         try:
             await cron.start()
@@ -431,7 +485,7 @@ def gateway(
             cron.stop()
             agent.stop()
             await channels.stop_all()
-    
+
     asyncio.run(run())
 
 
