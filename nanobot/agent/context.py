@@ -25,21 +25,26 @@ class ContextBuilder:
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
     
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    def build_system_prompt(self, skill_names: list[str] | None = None, custom_prompt: str | None = None) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
-        
+
         Args:
             skill_names: Optional list of skills to include.
-        
+            custom_prompt: Optional custom system prompt to prepend.
+
         Returns:
             Complete system prompt.
         """
         parts = []
-        
+
+        # Custom prompt first (if provided)
+        if custom_prompt:
+            parts.append(custom_prompt)
+
         # Core identity
         parts.append(self._get_identity())
-        
+
         # Bootstrap files
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
@@ -129,6 +134,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         media: list[str] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
+        custom_system_prompt: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -140,6 +146,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
             media: Optional list of local file paths for images/media.
             channel: Current channel (telegram, feishu, etc.).
             chat_id: Current chat/user ID.
+            custom_system_prompt: Optional custom system prompt for this agent.
 
         Returns:
             List of messages including system prompt.
@@ -147,7 +154,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         messages = []
 
         # System prompt
-        system_prompt = self.build_system_prompt(skill_names)
+        system_prompt = self.build_system_prompt(skill_names, custom_system_prompt)
         if channel and chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
         messages.append({"role": "system", "content": system_prompt})

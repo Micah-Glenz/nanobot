@@ -11,7 +11,7 @@ from nanobot.agent.tools.base import Tool
 
 class ExecTool(Tool):
     """Tool to execute shell commands."""
-    
+
     def __init__(
         self,
         timeout: int = 60,
@@ -22,7 +22,7 @@ class ExecTool(Tool):
     ):
         self.timeout = timeout
         self.working_dir = working_dir
-        self.deny_patterns = deny_patterns or [
+        self.deny_patterns = deny_patterns if deny_patterns is not None else [
             r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
             r"\bdel\s+/[fq]\b",              # del /f, del /q
             r"\brmdir\s+/s\b",               # rmdir /s
@@ -32,7 +32,7 @@ class ExecTool(Tool):
             r"\b(shutdown|reboot|poweroff)\b",  # system power
             r":\(\)\s*\{.*\};\s*:",          # fork bomb
         ]
-        self.allow_patterns = allow_patterns or []
+        self.allow_patterns = allow_patterns if allow_patterns is not None else []
         self.restrict_to_workspace = restrict_to_workspace
     
     @property

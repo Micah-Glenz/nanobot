@@ -54,6 +54,7 @@ class AgentLoop:
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
+        custom_system_prompt: str | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         from nanobot.cron.service import CronService
@@ -69,6 +70,7 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.custom_system_prompt = custom_system_prompt
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -105,6 +107,8 @@ class AgentLoop:
             working_dir=str(self.workspace),
             timeout=self.exec_config.timeout,
             restrict_to_workspace=self.restrict_to_workspace,
+            deny_patterns=getattr(self.exec_config, '_deny_patterns', None),
+            allow_patterns=getattr(self.exec_config, '_allow_patterns', None),
         ))
         
         # Web tools
@@ -328,6 +332,7 @@ class AgentLoop:
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=msg.chat_id,
+            custom_system_prompt=self.custom_system_prompt,
         )
 
         # Send initial "Thinking..." message for streaming support
@@ -394,6 +399,7 @@ class AgentLoop:
             current_message=msg.content,
             channel=origin_channel,
             chat_id=origin_chat_id,
+            custom_system_prompt=self.custom_system_prompt,
         )
         final_content, _ = await self._run_agent_loop(initial_messages)
 

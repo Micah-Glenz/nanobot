@@ -211,6 +211,10 @@ class AgentDefinition(Base):
     # Agent-specific channels (overrides global config)
     telegram: TelegramConfig | None = None
 
+    # Agent-specific exec restrictions
+    exec_deny_patterns: list[str] | None = None  # Additional patterns to block
+    exec_allow_patterns: list[str] | None = None  # If set, only these patterns allowed
+
 
 class AgentsConfig(Base):
     """Agent configuration."""
@@ -272,6 +276,8 @@ class ExecToolConfig(Base):
     """Shell exec tool configuration."""
 
     timeout: int = 60
+    _deny_patterns: list[str] | None = None  # Internal: patterns to block
+    _allow_patterns: list[str] | None = None  # Internal: if set, only these allowed
 
 
 class MCPServerConfig(Base):

@@ -85,6 +85,38 @@ class AgentInstance:
 
         return self.config
 
+    def _build_exec_config(self) -> "ExecToolConfig":
+        """Build exec config with agent-specific restrictions."""
+        from nanobot.config.schema import ExecToolConfig
+
+        # Start with global config
+        base_timeout = self.config.tools.exec.timeout
+
+        # Build deny patterns: global + agent-specific
+        deny_patterns = [
+            r"\brm\s+-[rf]{1,2}\b",
+            r"\bdel\s+/[fq]\b",
+            r"\brmdir\s+/s\b",
+            r"\b(format|mkfs|diskpart)\b",
+            r"\bdd\s+if=",
+            r">\s*/dev/sd",
+            r"\b(shutdown|reboot|poweroff)\b",
+            r":\(\)\s*\{.*\};\s*:",
+        ]
+
+        # Add agent-specific deny patterns
+        if self.definition.exec_deny_patterns:
+            deny_patterns.extend(self.definition.exec_deny_patterns)
+
+        # If agent has allow patterns, use those exclusively
+        allow_patterns = self.definition.exec_allow_patterns
+
+        return ExecToolConfig(
+            timeout=base_timeout,
+            _deny_patterns=deny_patterns,
+            _allow_patterns=allow_patterns,
+        )
+
     async def _ensure_workspace(self) -> None:
         """Ensure workspace directory exists with required structure."""
         ensure_dir(self.workspace)
@@ -127,6 +159,7 @@ class AgentInstance:
             from nanobot.agent.loop import AgentLoop
 
             model_config = self._resolve_model_config()
+            exec_config = self._build_exec_config()
             self.agent_loop = AgentLoop(
                 bus=self.bus,
                 provider=self.provider,
@@ -137,10 +170,11 @@ class AgentInstance:
                 max_iterations=model_config["max_iterations"],
                 memory_window=model_config["memory_window"],
                 brave_api_key=self.config.tools.web.search.api_key or None,
-                exec_config=self.config.tools.exec,
+                exec_config=exec_config,
                 restrict_to_workspace=self.config.tools.restrict_to_workspace,
                 session_manager=self.session_manager,
                 mcp_servers=self.config.tools.mcp_servers,
+                custom_system_prompt=self.definition.system_prompt,
             )
             self.logger.debug("Agent loop created")
 
